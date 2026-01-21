@@ -37,7 +37,11 @@ Step 5:
     Variable name: HADOOP_HOME
     Variable value: C:\spark
 
-
 Step 6:
 - Verify by closing all CMD and open new CMD.
 - Type: spark-shell
+
+Step 7:
+- Open VS Code > Terminal (Ctrl + `)
+- pip install pyspark
+- pip install pyspark findspark
