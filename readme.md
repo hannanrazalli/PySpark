@@ -45,3 +45,6 @@ Step 7:
 - Open VS Code > Terminal (Ctrl + `)
 - pip install pyspark
 - pip install pyspark findspark
+
+
+# Databricks Compute - Create Clusters
