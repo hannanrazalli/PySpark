@@ -6,3 +6,6 @@ display(df)
 1) Create dataframe:
 spark.createDataFrame
 
+data = [('John', 21), ('Amy', 25), ('Anita', 41), ('Rohan', 25), ('Maria', 37)]
+df = spark.createDataFrame(data) *Create dataframe*
+df.show() *Print dataframe*
