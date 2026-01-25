@@ -32,3 +32,21 @@ df = spark.read.format("csv") \ *Penggunaan "\" utk bgtahu sambung ke next line*
     .load("/path/ke/file/jualan.csv")
 
 df.show()
+
+
+# df.show(n=200, truncate=3)
+limit = 200
+setiap value limit first 3 letters
+
+# WRITE DF TO CSV:
+
+data = .....
+
+df = spark.createDataFrame(data, schema=schema)
+
+volume_path = "/Volumes/workspace/default/hannan_files/test_csv_195"
+
+df.write.format("csv") \ *1*
+  .mode("overwrite") \ *2*
+  .option("header", "true") \ *3*
+  .save(volume_path) *4*
