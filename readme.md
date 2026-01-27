@@ -17,6 +17,7 @@ df_raw = (spark.read.format("json")
 df_processed = (df_raw.withColumn("invalid", when(
                                 (col("area_km2")==0) | (col("area_km2").isNull()), True).otherwise(False))
                     .withColumn("pop_density", round(expr("try_divide(population, area_km2)"),1))
+                    .withColumn("processed_at", current_timestamp())
 )
 
 # Step 4: Split (Clean & Quarantine)
