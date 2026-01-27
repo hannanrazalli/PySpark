@@ -1,50 +1,37 @@
-# First commit - 18/1/2026
-# pip install pyspark
+# TIER 1 TO Read CSV & JSON:
+from pyspark.sql.types import *
+from pyspark.sql.functions import *
 
-Step 1:
-- Download & install JDK (Java Development Kit)
-- https://www.oracle.com/asean/java/technologies/downloads/#jdk25-windows
+# Step 1: Settings & Paths
+raw_path = "/Volumes/workspace/default/hannan_files/raw_data"
+clean_path = "/Volumes/workspace/default/hannan_files/clean_data"
+quarantine_path = "/Volumes/workspace/default/hannan_files/quarantine_data"
 
-Step 2:
-Install VS Code
-Add Python extension
+# Step 2: Read raw data with schema (Verify)
+df_raw = (spark.read.format("json")
+                    .schema(schema)
+                    .load(raw_path)
+)
 
-Step 3:
-- go to spark.apache.org
-- download .tgz file (eg: spark-4.1.1-bin-hadoop3.tgz)
-- Extract > Put file in C:\spark (eg: C:\spark\bin, C:\spark\conf)
+# Step 3: Process raw data
+df_processed = (df_raw.withColumn("invalid", when(
+                                (col("area_km2")==0) | (col("area_km2").isNull()), True).otherwise(False))
+                    .withColumn("pop_density", round(expr("try_divide(population, area_km2)"),1))
+)
 
-Step 4:
-- Go to https://github.com/cdarlint/winutils.
-- Open any version file (eg: hadoop-3.3.6/bin)
-- Download winutils.exe (eg: https://github.com/cdarlint/winutils/blob/master/hadoop-3.3.6/bin/winutils.exe)
-- Put winutils.exe file in C:\spark\bin
+# Step 4: Split (Clean & Quarantine)
+df_clean = df_processed.filter(col("invalid")==False).drop("invalid")
+df_quarantine = df_processed.filter(col("invalid")==True).drop("invalid")
 
-Step 5:
-- Open environment variables:
+# Step 5: Write to paths
+(df_clean.write.format("json")
+                .mode("overwrite")
+                .option("compression", "gzip")
+                .save(clean_path)
+)
 
-- System variable > New:
-    Variable name: JAVA_HOME
-    Variable value: C:\Program Files\Java\jdk-25.0.2
-
-- System variable > Path > Edit > New > paste: %JAVA_HOME%\bin
-
-- System variable > New:
-    Variable name: SPARK_HOME
-    Variable value: C:\spark
-
-- System variable > New:
-    Variable name: HADOOP_HOME
-    Variable value: C:\spark
-
-Step 6:
-- Verify by closing all CMD and open new CMD.
-- Type: spark-shell
-
-Step 7:
-- Open VS Code > Terminal (Ctrl + `)
-- pip install pyspark
-- pip install pyspark findspark
-
-
-# Databricks Compute - Create Clusters
+(df_quarantine.write.format("json")
+                .mode("overwrite")
+                .option("compression", "gzip")
+                .save(quarantine_path)
+)
