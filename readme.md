@@ -36,3 +36,12 @@ df_quarantine = df_processed.filter(col("invalid")==True).drop("invalid")
                 .option("compression", "gzip")
                 .save(quarantine_path)
 )
+
+
+# partitionBy("column_name"):
+# Contoh guna format Delta (Highest Tier)
+(df_clean.write
+    .format("delta")
+    .mode("overwrite")
+    .partitionBy("continent")  *Kita asingkan folder ikut Benua*
+    .saveAsTable("country_stats_partitioned"))
