@@ -45,3 +45,14 @@ df_quarantine = df_processed.filter(col("invalid")==True).drop("invalid")
     .mode("overwrite")
     .partitionBy("continent")  *Kita asingkan folder ikut Benua*
     .saveAsTable("country_stats_partitioned"))
+
+
+
+# SELECT METHOD:
+
+
+
+
+# PENDING LESSONS TIER 1:
+1) Rename column
+2) DF Transformation - maths, upper, lower. (withColumn not efficient, directly use select)(sometimes)
