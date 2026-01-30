@@ -46,12 +46,8 @@ df_quarantine = df_processed.filter(col("invalid")==True).drop("invalid")
     .partitionBy("continent")  *Kita asingkan folder ikut Benua*
     .saveAsTable("country_stats_partitioned"))
 
-
-
-# SELECT METHOD:
-
-
-
+# DELTA HISTORY:
+display(spark.sql("DESCRIBE HISTORY country_clean"))
 
 # PENDING LESSONS TIER 1:
 1) Rename column
