@@ -49,6 +49,12 @@ df_quarantine = df_processed.filter(col("invalid")==True).drop("invalid")
 # DELTA HISTORY:
 display(spark.sql("DESCRIBE HISTORY country_clean"))
 
+*To read previous version*
+ori_df = (spark.read.option("versionAsOf", 0)
+                    .table("country_clean")
+)
+display(ori_df)
+
 # PENDING LESSONS TIER 1:
 1) Rename column
 2) DF Transformation - maths, upper, lower. (withColumn not efficient, directly use select)(sometimes)
