@@ -155,4 +155,18 @@ Ganti perkataan guna pattern. Buang simbol matawang atau karakter khas.
 Pecahkan string jadi Array.	Pecah kolum tags yang dipisahkan oleh koma.
 
 
+CHAPTER 22: MATHS FUNCTIONS
+TRIM, LENGTH, CHAPTER Z, CONCAT_WS, LIT, INITCAP, UPPER
+
 *CHAPTER 23: MATHS FUNCTIONS*
+
+*CHAPTER 24: DateTime functions*
+
+CHAPTER 26: 
+
+CHAPTER 27: Grouping & Aggregations
+Multiple aggregations
+
+CHAPTER 28: Sorting & limiting
+
+CHAPTER 29: 
