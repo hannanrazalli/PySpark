@@ -165,7 +165,7 @@ TRIM, LENGTH, CHAPTER Z, CONCAT_WS, LIT, INITCAP, UPPER
 CHAPTER 26: 
 
 CHAPTER 27: Grouping & Aggregations
-Multiple aggregations
+- Multiple aggregations
 
 CHAPTER 28: Sorting & limiting
 
