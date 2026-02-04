@@ -63,47 +63,39 @@ display(ori_df)
 *---------------------------------*
 *BRONZE TO SILVER (JSON TO DELTA):*
 *---------------------------------*
-# Step 1: Settings & paths
+# Step 1: Paths
 json_path = "/Volumes/workspace/default/delta_practice_files/json_195"
-table_bronze = "bronze_countries"
-table_silver_clean = "silver_countries_clean"
-table_silver_quarantine = "silver_countries_quarantine"
+bronze_table = "bronze_countries"
+silver_table_clean = "silver_countries_clean"
+silver_table_quarantine = "silver_countries_quarantine"
 
-# Step 2: Bronze layer(ingestion with merge)
-df_incoming = (
-    spark.read.format("json")
-              .schema(schema)
-              .load(json_path))
+# Step 2: Read, timstamp, call table, merge
+df_incoming = spark.read.format("json").schema(schema).load(json_path)
+df_incoming = df_incoming.withColumn("_time_stamp", F.current_timestamp())
 
-df_incoming = (df_incoming.withColumn("_time_stamp", F.current_timestamp()))
-
-if not spark.catalog.tableExists(table_bronze):
-    df_incoming.write.format("delta").saveAsTable(table_bronze)
+if not spark.catalog.tableExists(bronze_table):
+    (df_incoming.write.format("delta").saveAsTable(bronze_table))
 
 else:
-    dt_bronze = DeltaTable.forName(spark, table_bronze)
-    
-    (
-        dt_bronze.alias("t")
-                 .merge(df_incoming.alias("s"), "t.country_name = s.country_name")
-                 .whenMatchedUpdateAll()
-                 .whenNotMatchedInsertAll()
-                 .execute()
+    dt_bronze = DeltaTable.forName(spark, bronze_table)
+
+    (dt_bronze.alias("t")
+              .merge(df_incoming.alias("s"), "s.country_name = t.country_name")
+              .whenMatchedUpdateAll()
+              .whenNotMatchedInsertAll()
+              .execute()
     )
 
-# Step 3: Silver layer(Process from bronze)
-df_bronze = spark.read.table(table_bronze)
-
-df_processed = (df_bronze
-                    .withColumn("population", F.expr("try_cast(regexp_replace(population, '[^0-9]', '') AS bigint)"))
-                    .withColumn("area_km2", F.expr("try_cast(regexp_replace(area_km2, '[^0-9.]', '') AS double)"))
-                    .withColumn("pop_density", F.expr("try_divide(population, area_km2)"))
-                    .withColumn("is_invalid", F.when(
-                        (F.col("area_km2") <= 0) |
-                        (F.col("area_km2").isNull()) |
-                        (F.col("population").isNull()), True
-                    ).otherwise(False))
-                    .withColumn("_processed_at", F.current_timestamp())
+# Step 3: Source, process
+df_bronze = spark.read.table(bronze_table)
+df_processed = (df_bronze.withColumn("population", F.expr("try_cast(regexp_replace(population, '[^0-9]', '') AS bigint)"))
+                       .withColumn("area_km2", F.expr("try_cast(regexp_replace(area_km2, '[^0-9.]', '') AS double)"))
+                       .withColumn("pop_density", F.expr("try_divide(population, area_km2)"))
+                       .withColumn("is_invalid", F.when(
+                           (F.col("area_km2") <= 0) |
+                           (F.col("area_km2").isNull()) |
+                           (F.col("population").isNull()), True
+                       ).otherwise(False))
 )
 
 # Step 4: Split
@@ -111,15 +103,16 @@ df_clean = df_processed.filter(F.col("is_invalid") == False).drop(F.col("is_inva
 df_quarantine = df_processed.filter(F.col("is_invalid") == True)
 
 # Step 5: Write
-def write_delta(df, table_name, description):
+def delta_write(df, table_name, description):
     (df.write.format("delta")
-            .mode("overwrite")
-            .option("overwriteSchema", True)
-            .saveAsTable(table_name))
-    print(f"Successfully updated {table_name}!")
+             .mode("overwrite")
+             .option("overwriteSchema", "true")
+             .option("description", description)
+             .saveAsTable(table_name))
+    print(f"Successfully update {table_name}")
 
-write_delta(df_clean, table_silver_clean, "Cleaned country data for analytics")
-write_delta(df_quarantine, table_silver_quarantine, "Data with invalid area/pop for audit")
+delta_write(df_clean, silver_table_clean, "Clean country silver table")
+delta_write(df_quarantine, silver_table_quarantine, "Quarantine country silver table")
 
 
 *---------------------*
