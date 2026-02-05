@@ -145,3 +145,51 @@ CHAPTER 27: Grouping & Aggregations
 CHAPTER 28: Sorting & limiting
 
 CHAPTER 29: 
+
+
+*--------------*
+*SILVER TO GOLD*
+*--------------*
+# Step 1: The Definition (Business Logic)
+from pyspark.sql import functions as F
+
+def transform_gold_metrics(df):
+    """
+    BUSINESS LOGIC LAYER
+    Audit Note: Aggregating population by region for Executive Dashboard.
+    """
+    return df.groupBy("region").agg(
+        F.count("country_name").alias("total_countries"),
+        F.sum("population").alias("total_population"),
+        F.avg("pop_density").alias("avg_density"),
+        # Highest Tier 1: Sentiasa simpan audit timestamp di Gold
+        F.max("processed_at").alias("data_freshness_check")
+    )
+
+# Step 2: The Audit Enrichment (Metadata)
+def add_business_tier(df):
+    """
+    ENRICHMENT LAYER
+    Audit Note: Categorizing regions based on population scale.
+    """
+    return df.withColumn("market_tier", 
+        F.expr("""
+            CASE 
+                WHEN total_population > 1000000000 THEN 'Tier 1 Market'
+                WHEN total_population > 500000000 THEN 'Tier 2 Market'
+                ELSE 'Emerging Market'
+            END
+        """))
+
+# Step 3: Execution (The Main Pipe)
+1. Load data Silver (Source of Truth)
+df_silver = spark.read.table("silver_countries_clean")
+
+2. Run Aggregation
+df_aggregated = transform_gold_metrics(df_silver)
+
+3. Run Enrichment (SQL Expressions style)
+df_final_gold = add_business_tier(df_aggregated)
+
+4. Sorting for Presentation
+df_final_gold = df_final_gold.orderBy(F.col("total_population").desc())
