@@ -115,6 +115,38 @@ delta_write(df_clean, silver_table_clean, "Clean country silver table")
 delta_write(df_quarantine, silver_table_quarantine, "Quarantine country silver table")
 
 
+*---------------------------------*
+*BRONZE TO SILVER (ARCHITECT TIER)*
+*---------------------------------*
+from pyspark.sql import functions as F
+
+# --- TOOLBOX: Segala logic 'sampah' simpan sini ---
+def clean_geographic_logic(df):
+    return (df.withColumn("population", F.expr("try_cast(regexp_replace(population, '[^0-9]', '') AS bigint)"))
+              .withColumn("area_km2", F.expr("try_cast(regexp_replace(area_km2, '[^0-9.]', '') AS double)"))
+              .withColumn("pop_density", F.expr("try_divide(population, area_km2)")))
+
+def validate_quality_logic(df):
+    return df.withColumn("is_invalid", 
+        (F.col("area_km2") <= 0) | F.col("area_km2").isNull() | F.col("population").isNull())
+
+# --- PIPELINE: Panggil toolbox tadi ---
+df_bronze = spark.read.table("bronze_countries")
+
+# INILAH GAYA HIGHEST TIER 1 (Architectural Flow)
+df_silver_final = (df_bronze
+    .transform(clean_geographic_logic)
+    .transform(validate_quality_logic)
+    .withColumn("_processed_at", F.current_timestamp())
+)
+
+# Split & Write (Guna fungsi upsert yang kita bincang tadi)
+df_clean = df_silver_final.filter("is_invalid = False").drop("is_invalid")
+df_quarantine = df_silver_final.filter("is_invalid = True")
+
+# Write to Delta (Upsert)
+upsert_to_delta(df_clean, "silver_countries_clean")
+upsert_to_delta(df_quarantine, "silver_countries_quarantine")
 *---------------------*
 *PYSPARK TRIM FUNCTION:*
 *---------------------*
