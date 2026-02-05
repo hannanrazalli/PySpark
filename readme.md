@@ -118,70 +118,66 @@ delta_write(df_quarantine, silver_table_quarantine, "Quarantine country silver t
 *---------------------------------*
 *BRONZE TO SILVER (ARCHITECT TIER)*
 *---------------------------------*
-from pyspark.sql import functions as F
+# Step 1: Paths / configurations
+json_path = "/Volumes/workspace/default/delta_practice_files/json_195"
+bronze_table = "bronze_countries"
+silver_table_clean = "silver_countries_clean"
+silver_table_quarantine = "silver_countries_quarantine"
 
-# ==========================================
-# STEP 1: TOOLBOX (Functions / SOP)
-# ==========================================
+# Step 2: Bronze ingestion
+def bronze_ingestion(df, table_name):
+    if not spark.catalog.tableExists(table_name):
+        df.write.format("delta").saveAsTable(table_name)
+    
+    else:
+        dt_bronze = DeltaTable.forName(spark, table_name)
+        (dt_bronze.alias("t")
+                  .merge(df.alias("s"), "s.country_name = t.country_name")
+        )
 
-def clean_geographic_logic(df):
-    """
-    SOP untuk cuci data Geografi.
-    Menggunakan logic try_cast dan regex dari Step 3 asal kau.
-    """
+df_incoming = (spark.read.format("delta").schema(schema).load(json_path))
+df_incoming = (df_incoming.withColumn("_time_stamp", F.current_timestamp()))
+bronze_ingestion(df_incoming, bronze_table)
+
+# Step 3: Silver transformation
+def casting_column(df):
     return (df.withColumn("population", F.expr("try_cast(regexp_replace(population, '[^0-9]', '') AS bigint)"))
               .withColumn("area_km2", F.expr("try_cast(regexp_replace(area_km2, '[^0-9.]', '') AS double)"))
-              .withColumn("pop_density", F.expr("try_divide(population, area_km2)")))
+              .withColumn("pop_density", F.expr("try_divide(population, area_km2)"))
+    )
 
-def validate_quality_logic(df):
-    """
-    SOP untuk tentukan kualiti data (Is Invalid?).
-    Sama macam Step 4 asal kau.
-    """
-    return df.withColumn("is_invalid", 
-        (F.col("area_km2") <= 0) | 
-        F.col("area_km2").isNull() | 
-        F.col("population").isNull())
+def validate_column(df):
+    return(df.withColumn("is_invalid", F.when(
+        (F.col("area_km2")<=0) |
+        (F.col("area_km2").isNull()) |
+        (F.col("population").isNull()), True
+    ).otherwise(False))
+    )
 
-def add_audit_metadata(df):
-    """SOP untuk tambah rekod masa proses (Audit Trail)."""
-    return df.withColumn("_processed_at", F.current_timestamp())
+def timestamp_column(df):
+    return(df.withColumn("_time_stamp", F.current_timestamp()))
 
-# ==========================================
-# STEP 2: EXECUTION PIPELINE (The Flow)
-# ==========================================
+df_bronze = spark.read.table(bronze_table)
+df_processed = (df_bronze
+                .transform(casting_column)
+                .transform(validate_column)
+                .transform(timestamp_column))
 
-# 1. Load data dari Bronze
-df_bronze = spark.read.table("bronze_countries")
+# Step 4: Split
+df_clean = df_processed.filter("is_invalid = False").drop("is_invalid")
+df_quarantine = df_processed.filter("is_invalid = True")
 
-# 2. Main Transformation (Method Chaining)
-# Inilah gaya Highest Tier 1. Data mengalir melalui SOP yang kita dah buat.
-df_silver_processed = (df_bronze
-    .transform(clean_geographic_logic)
-    .transform(validate_quality_logic)
-    .transform(add_audit_metadata)
-)
-
-# 3. Splitting Clean vs Quarantine
-df_clean = df_silver_processed.filter("is_invalid = False").drop("is_invalid")
-df_quarantine = df_silver_processed.filter("is_invalid = True")
-
-# ==========================================
-# STEP 3: WRITING (Persistence)
-# ==========================================
-
-def write_to_silver(df, table_name, description):
-    """Helper function untuk tulis data dengan Metadata."""
+# Step 5: Write
+def delta_write(df, table_name, description):
     (df.write.format("delta")
-             .mode("overwrite") # Kau boleh tukar ke 'append' atau guna 'merge' nanti
+             .mode("overwrite")
              .option("overwriteSchema", "true")
              .option("description", description)
              .saveAsTable(table_name))
     print(f"Successfully updated {table_name}")
 
-# Panggil fungsi tulis
-write_to_silver(df_clean, "silver_countries_clean", "Table untuk data yang dah cuci.")
-write_to_silver(df_quarantine, "silver_countries_quarantine", "Table untuk data yang bermasalah.")
+delta_write(df_clean, silver_table_clean, "Clean countries silver")
+delta_write(df_quarantine, silver_table_quarantine, "Quarantine countries silver")
 
 
 *---------------------*
