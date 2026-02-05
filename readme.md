@@ -120,33 +120,70 @@ delta_write(df_quarantine, silver_table_quarantine, "Quarantine country silver t
 *---------------------------------*
 from pyspark.sql import functions as F
 
-# --- TOOLBOX: Segala logic 'sampah' simpan sini ---
+# ==========================================
+# STEP 1: TOOLBOX (Functions / SOP)
+# ==========================================
+
 def clean_geographic_logic(df):
+    """
+    SOP untuk cuci data Geografi.
+    Menggunakan logic try_cast dan regex dari Step 3 asal kau.
+    """
     return (df.withColumn("population", F.expr("try_cast(regexp_replace(population, '[^0-9]', '') AS bigint)"))
               .withColumn("area_km2", F.expr("try_cast(regexp_replace(area_km2, '[^0-9.]', '') AS double)"))
               .withColumn("pop_density", F.expr("try_divide(population, area_km2)")))
 
 def validate_quality_logic(df):
+    """
+    SOP untuk tentukan kualiti data (Is Invalid?).
+    Sama macam Step 4 asal kau.
+    """
     return df.withColumn("is_invalid", 
-        (F.col("area_km2") <= 0) | F.col("area_km2").isNull() | F.col("population").isNull())
+        (F.col("area_km2") <= 0) | 
+        F.col("area_km2").isNull() | 
+        F.col("population").isNull())
 
-# --- PIPELINE: Panggil toolbox tadi ---
+def add_audit_metadata(df):
+    """SOP untuk tambah rekod masa proses (Audit Trail)."""
+    return df.withColumn("_processed_at", F.current_timestamp())
+
+# ==========================================
+# STEP 2: EXECUTION PIPELINE (The Flow)
+# ==========================================
+
+# 1. Load data dari Bronze
 df_bronze = spark.read.table("bronze_countries")
 
-# INILAH GAYA HIGHEST TIER 1 (Architectural Flow)
-df_silver_final = (df_bronze
+# 2. Main Transformation (Method Chaining)
+# Inilah gaya Highest Tier 1. Data mengalir melalui SOP yang kita dah buat.
+df_silver_processed = (df_bronze
     .transform(clean_geographic_logic)
     .transform(validate_quality_logic)
-    .withColumn("_processed_at", F.current_timestamp())
+    .transform(add_audit_metadata)
 )
 
-# Split & Write (Guna fungsi upsert yang kita bincang tadi)
-df_clean = df_silver_final.filter("is_invalid = False").drop("is_invalid")
-df_quarantine = df_silver_final.filter("is_invalid = True")
+# 3. Splitting Clean vs Quarantine
+df_clean = df_silver_processed.filter("is_invalid = False").drop("is_invalid")
+df_quarantine = df_silver_processed.filter("is_invalid = True")
 
-# Write to Delta (Upsert)
-upsert_to_delta(df_clean, "silver_countries_clean")
-upsert_to_delta(df_quarantine, "silver_countries_quarantine")
+# ==========================================
+# STEP 3: WRITING (Persistence)
+# ==========================================
+
+def write_to_silver(df, table_name, description):
+    """Helper function untuk tulis data dengan Metadata."""
+    (df.write.format("delta")
+             .mode("overwrite") # Kau boleh tukar ke 'append' atau guna 'merge' nanti
+             .option("overwriteSchema", "true")
+             .option("description", description)
+             .saveAsTable(table_name))
+    print(f"Successfully updated {table_name}")
+
+# Panggil fungsi tulis
+write_to_silver(df_clean, "silver_countries_clean", "Table untuk data yang dah cuci.")
+write_to_silver(df_quarantine, "silver_countries_quarantine", "Table untuk data yang bermasalah.")
+
+
 *---------------------*
 *PYSPARK TRIM FUNCTION:*
 *---------------------*
