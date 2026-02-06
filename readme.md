@@ -151,11 +151,12 @@ def casting_column(df):
            )
     
 def validate_data(df):
-    return(df.withColumn("is_invalid", F.when(
-        (F.col("area_km2")<= 0) |
-        (F.col("area_km2").isNull()) |
-        (F.col("population").isNull()), True
-    ).otherwise(False)))
+    return df.withColumn("invalid_reason", 
+        F.when(F.col("area_km2") <= 0, "INVALID_AREA")
+         .when(F.col("area_km2").isNull(), "NULL_AREA")
+         .when(F.col("population").isNull(), "NULL_POPULATION")
+         .otherwise(None)
+    ).withColumn("is_invalid", F.col("invalid_reason").isNotNull())
 
 def timestamp_column(df):
     return(df.withColumn("_time_stamp", F.current_timestamp()))
@@ -165,7 +166,18 @@ df_processed = (df_bronze
                 .transform(casting_column)
                 .transform(validate_data)
                 .transform(timestamp_column))
+"""
+def clean_to_bigint(df, col_name):
+    return df.withColumn(col_name, F.expr(f"try_cast(regexp_replace({col_name}, '[^0-9]', '') AS bigint)"))
 
+def clean_to_double(df, col_name):
+    return df.withColumn(col_name, F.expr(f"try_cast(regexp_replace({col_name}, '[^0-9.]', '') AS double)"))
+    
+df_processed = (df_bronze
+    .transform(lambda df: clean_to_bigint(df, "population"))
+    .transform(lambda df: clean_to_double(df, "area_km2"))
+)
+"""
 # Step 4: Split
 df_clean = df_processed.filter("is_invalid = False").drop("is_invalid")
 df_quarantine = df_processed.filter("is_invalid = True")
@@ -181,7 +193,6 @@ def delta_write(df, table_name, description):
     
 delta_write(df_clean, silver_table_clean, "Countries silver clean")
 delta_write(df_quarantine, silver_table_quarantine, "Countries silver quarantine")
-
 
 *---------------------*
 *PYSPARK TRIM FUNCTION:*
