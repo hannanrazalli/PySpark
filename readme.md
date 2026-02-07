@@ -272,3 +272,93 @@ df_final_gold = add_business_tier(df_aggregated)
 
 4. Sorting for Presentation
 df_final_gold = df_final_gold.orderBy(F.col("total_population").desc())
+
+
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+# PHASE 1: ATOMIC UTILS
+def util_calc_share(col_part, col_total):
+    return F.round((F.col(col_part) / F.col(total_col)) * 100, 2)
+
+# PHASE 2: BUSINESS TRANSFORMATIONS
+def apply_gold_kpis(df):
+    # Window untuk grouping (Continent)
+    # Kita nak total populasi mengikut benua & ranking negara dalam benua itu
+    win_agg = Window.partitionBy("continent")
+    win_rank = Window.partitionBy("continent").orderBy(F.desc("population"))
+    
+    return (df.withColumn("total_continent_pop", F.sum("population").over(win_agg))
+              .withColumn("pop_share_pct", F.round((F.col("population") / F.col("total_continent_pop")) * 100, 2))
+              .withColumn("continent_rank", F.rank().over(win_rank))
+    )
+
+# PHASE 3: EXECUTION
+config = {"src": "silver_countries", "tgt": "gold_country_metrics"}
+
+df_gold = (spark.read.table(config["src"])
+           .transform(apply_gold_kpis)
+           .select("country_name", "continent", "population", "pop_share_pct", "continent_rank")
+           .withColumn("_processed_at", F.current_timestamp())
+)
+
+# WRITE (SCD Type 1: Overwrite Snapshot)
+df_gold.write.format("delta").mode("overwrite").saveAsTable(config["tgt"])
+
+# OPTIMIZATION
+spark.sql(f"OPTIMIZE {config['tgt']} ZORDER BY (continent)")
+
+
+
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+# PHASE 1: ARCHITECTURAL UTILS (Metadata & Security)
+def add_metadata(df, layer):
+    return df.withColumn("_source_system", F.lit("Medallion_Pipeline")) \
+             .withColumn("_data_layer", F.lit(layer)) \
+             .withColumn("_ingestion_timestamp", F.current_timestamp())
+
+# PHASE 2: STAR SCHEMA MODELING (Fact vs Dimension)
+# Architect tak buat satu table besar, tapi pecahkan ikut modeling
+def build_fact_population(df):
+    win_rank = Window.partitionBy("continent").orderBy(F.desc("population"))
+    
+    return (df.select(
+                F.sha2("country_name", 256).alias("country_key"), # Surrogate Key (Hash)
+                "population",
+                "area_km2",
+                "pop_density"
+            )
+            .withColumn("rank_global", F.rank().over(Window.orderBy(F.desc("population"))))
+            .transform(lambda df: add_metadata(df, "GOLD_FACT"))
+    )
+
+def build_dim_geography(df):
+    return (df.select("country_name", "continent", "region")
+            .distinct()
+            .withColumn("country_key", F.sha2("country_name", 256))
+            .transform(lambda df: add_metadata(df, "GOLD_DIM"))
+    )
+
+# PHASE 3: PRODUCTION EXECUTION FLOW
+config_arch = {
+    "src": "silver_countries",
+    "fact_tgt": "gold_fact_population",
+    "dim_tgt": "gold_dim_geography"
+}
+
+df_source = spark.read.table(config_arch["src"]).cache() # Cache for performance
+
+# 1. Create Fact Table
+df_fact = build_fact_population(df_source)
+df_fact.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(config_arch["fact_tgt"])
+
+# 2. Create Dimension Table
+df_dim = build_dim_geography(df_source)
+df_dim.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(config_arch["dim_tgt"])
+
+# PHASE 4: THE MAINTENANCE SUITE (Cost & Performance)
+# ZORDER untuk Fact Table pada Foreign Key untuk join laju
+spark.sql(f"OPTIMIZE {config_arch['fact_tgt']} ZORDER BY (country_key)")
+spark.sql(f"VACUUM {config_arch['fact_tgt']} RETAIN 168 HOURS") # Kemaskan fail lama (7 hari)
