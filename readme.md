@@ -60,69 +60,15 @@ display(ori_df)
 2) DF Transformation - maths, upper, lower. (withColumn not efficient, directly use select)(sometimes)
 
 
-*---------------------------------*
-*BRONZE TO SILVER (JSON TO DELTA):*
-*---------------------------------*
-# Step 1: Paths
-json_path = "/Volumes/workspace/default/delta_practice_files/json_195"
-bronze_table = "bronze_countries"
-silver_table_clean = "silver_countries_clean"
-silver_table_quarantine = "silver_countries_quarantine"
-
-# Step 2: Read, timstamp, call table, merge
-df_incoming = spark.read.format("json").schema(schema).load(json_path)
-df_incoming = df_incoming.withColumn("_time_stamp", F.current_timestamp())
-
-if not spark.catalog.tableExists(bronze_table):
-    (df_incoming.write.format("delta").saveAsTable(bronze_table))
-
-else:
-    dt_bronze = DeltaTable.forName(spark, bronze_table)
-
-    (dt_bronze.alias("t")
-              .merge(df_incoming.alias("s"), "s.country_name = t.country_name")
-              .whenMatchedUpdateAll()
-              .whenNotMatchedInsertAll()
-              .execute()
-    )
-
-# Step 3: Source, process
-df_bronze = spark.read.table(bronze_table)
-df_processed = (df_bronze.withColumn("population", F.expr("try_cast(regexp_replace(population, '[^0-9]', '') AS bigint)"))
-                       .withColumn("area_km2", F.expr("try_cast(regexp_replace(area_km2, '[^0-9.]', '') AS double)"))
-                       .withColumn("pop_density", F.expr("try_divide(population, area_km2)"))
-                       .withColumn("is_invalid", F.when(
-                           (F.col("area_km2") <= 0) |
-                           (F.col("area_km2").isNull()) |
-                           (F.col("population").isNull()), True
-                       ).otherwise(False))
-)
-
-# Step 4: Split
-df_clean = df_processed.filter(F.col("is_invalid") == False).drop(F.col("is_invalid"))
-df_quarantine = df_processed.filter(F.col("is_invalid") == True)
-
-# Step 5: Write
-def delta_write(df, table_name, description):
-    (df.write.format("delta")
-             .mode("overwrite")
-             .option("overwriteSchema", "true")
-             .option("description", description)
-             .saveAsTable(table_name))
-    print(f"Successfully update {table_name}")
-
-delta_write(df_clean, silver_table_clean, "Clean country silver table")
-delta_write(df_quarantine, silver_table_quarantine, "Quarantine country silver table")
-
-
-*---------------------------------*
-*BRONZE TO SILVER (ARCHITECT TIER)*
-*---------------------------------*
+*-------------------------------*
+*BRONZE TO SILVER (SENIOR LEVEL)*
+*-------------------------------*
+# BRONZE TO SILVER - SENIOR LEVEL
 # Step 1: Paths configuration
 json_path = "/Volumes/workspace/default/delta_practice_files/json_195"
-bronze_table = "bronze_countries"
-silver_table_clean = "silver_countries_clean"
-silver_table_quarantine = "silver_countries_quarantine"
+src = "bronze_table"
+tgt = "silver_table_clean"
+qrt = "silver_table_quarantine"
 
 # Step 2: Bronze ingestion
 def bronze_ingestion(df, table_name):
@@ -137,62 +83,163 @@ def bronze_ingestion(df, table_name):
            .merge(df.alias("s"), "s.country_name = t.country_name")
            .whenMatchedUpdateAll()
            .whenNotMatchedInsertAll()
-           .execute())
-        
-df_incoming = spark.read.format("json").schema(schema).load(json_path)
-df_incoming = df_incoming.withColumn("_time_stamp", F.current_timestamp())
-bronze_ingestion(df_incoming, bronze_table)
+           .execute()
+        )
 
-# Step 3: Silven layer processing & transform
-def casting_column(df):
-    return(df.withColumn("population", F.expr("try_cast(regexp_replace(population, '[^0-9]', '') AS bigint)"))
-           .withColumn("area_km2", F.expr("try_cast(regexp_replace(area_km2, '[^0-9.]', '') AS double)"))
-           .withColumn("pop_density", F.expr("try_divide(population, area_km2)"))
-           )
-    
-def validate_data(df):
-    return df.withColumn("invalid_reason", 
-        F.when(F.col("area_km2") <= 0, "INVALID_AREA")
-         .when(F.col("area_km2").isNull(), "NULL_AREA")
-         .when(F.col("population").isNull(), "NULL_POPULATION")
-         .otherwise(None)
-    ).withColumn("is_invalid", F.col("invalid_reason").isNotNull())
+df_incoming = (spark.read.format("json")
+                       .schema(schema)
+                       .load(json_path)
+                       .withColumn("_time_stamp", F.current_timestamp())
+                       )
 
-def timestamp_column(df):
-    return(df.withColumn("_time_stamp", F.current_timestamp()))
+bronze_ingestion(df_incoming, src)
 
-df_bronze = spark.read.table(bronze_table)
-df_processed = (df_bronze
-                .transform(casting_column)
-                .transform(validate_data)
-                .transform(timestamp_column))
-"""
-def clean_to_bigint(df, col_name):
-    return df.withColumn(col_name, F.expr(f"try_cast(regexp_replace({col_name}, '[^0-9]', '') AS bigint)"))
+# Step 3: Processed & transformation
+def atomic_utils(df):
+    return (df.withColumn("population", F.expr("try_cast(regexp_replace(population, '[^0-9]', '') AS bigint)"))
+              .withColumn("area_km2", F.expr("try_cast(regexp_replace(area_km2, '[^0-9.]', '') AS double)"))
+            )
 
-def clean_to_double(df, col_name):
-    return df.withColumn(col_name, F.expr(f"try_cast(regexp_replace({col_name}, '[^0-9.]', '') AS double)"))
-    
-df_processed = (df_bronze
-    .transform(lambda df: clean_to_bigint(df, "population"))
-    .transform(lambda df: clean_to_double(df, "area_km2"))
+def process_at(df):
+    return df.withColumn("_time_stamp", F.current_timestamp())
+
+def trans_pop_density(df):
+    return df.withColumn("pop_density", F.expr("try_divide(population, area_km2)"))
+
+def data_validation(df):
+    return (df.withColumn("invalid_reason",
+                          F.when(F.col("area_km2").isNull(), "Null area")
+                           .when(F.col("population").isNull(), "Null population")
+                           .when(F.col("area_km2") <= 0, "Invalid area")
+                           .otherwise(None)
+                          )
+              .withColumn("is_invalid", F.col("invalid_reason").isNotNull())
+    )
+
+df_processed = (spark.read.table(src)
+                .transform(atomic_utils)
+                .transform(process_at)
+                .transform(trans_pop_density)
+                .transform(data_validation)
 )
-"""
-# Step 4: Split
-df_clean = df_processed.filter("is_invalid = False").drop("is_invalid")
+
+# Step 4: Split & Write
+df_clean = (df_processed.filter("is_invalid = False")
+                        .drop(F.col("is_invalid"))
+                        .drop(F.col("invalid_reason"))
+            )
+
 df_quarantine = df_processed.filter("is_invalid = True")
 
-# Step 5: Write
 def delta_write(df, table_name, description):
     (df.write.format("delta")
              .mode("overwrite")
              .option("overwriteSchema", "true")
              .option("description", description)
              .saveAsTable(table_name)
-             )
+    )
+
+delta_write(df_clean, tgt, "Countries silver clean")
+delta_write(df_quarantine, qrt, "Countries silver quarantine")
+
+# Step 5: Optimize
+spark.sql(f"OPTIMIZE {tgt}")
+
+*---------------------------------*
+*BRONZE TO SILVER (ARCHITECT TIER)*
+*---------------------------------*
+# BRONZE TO SILVER - ARCHTIECT LEVEL
+# PHASE 1: Atomic utilities
+def utils_to_bigint(col):
+    return F.expr(f"try_cast(regexp_replace({col}, '[^0-9]', '') AS bigint)")
+
+def utils_to_double(col):
+    return F.expr(f"try_cast(regexp_replace({col}, '[^0-9.]', '') AS double)")
+
+# PHASE 2: Transformation utils
+def utils_casting(df):
+    return (df.withColumn("population", utils_to_bigint("population"))
+              .withColumn("area_km2", utils_to_double("area_km2"))
+            )
+
+def ingest_at(df):
+    return df.withColumn("_time_stamp", F.current_timestamp())
+
+def trans_pop_density(df):
+    return df.withColumn("pop_density", F.expr("try_divide(population, area_km2)"))
+
+def data_validation(df):
+    rules = (F.when(F.col("area_km2")<=0, "Invalid area_km2")
+              .when(F.col("area_km2").isNull(), "Null area_km2")
+              .when(F.col("population").isNull(), "Null population")
+              .otherwise(None)
+    )
+
+    return (df.withColumn("invalid_reason", rules)
+              .withColumn("is_invalid", F.col("invalid_reason").isNotNull())
+            )
+
+# PHASE 3: 
+# Step 1: Paths configuration
+config = {
+    "json_path":"/Volumes/workspace/default/delta_practice_files/json_195",
+    "src":"bronze_countries",
+    "tgt":"silver_countries_clean",
+    "qrt":"silver_countries_quarantine"
+}
+
+# Step 2: Bronze ingestion
+def bronze_ingestion(df, table_name, merge_col):
+    if not spark.catalog.tableExists(table_name):
+        df.write.format("delta").saveAsTable(table_name)
     
-delta_write(df_clean, silver_table_clean, "Countries silver clean")
-delta_write(df_quarantine, silver_table_quarantine, "Countries silver quarantine")
+    else:
+        dt = DeltaTable.forName(spark, table_name)
+
+        (dt.alias("t")
+           .merge(df.alias("s"), f"s.{merge_col} = t.{merge_col}")
+           .whenMatchedUpdateAll()
+           .whenNotMatchedInsertAll()
+           .execute()
+        )
+
+df_incoming = (spark.read.format("json")
+                       .schema(schema)
+                       .load(config['json_path'])
+                       .withColumn("_time_stamp", F.current_timestamp())
+)
+
+bronze_ingestion(df_incoming, config['src'], "country_name")
+
+# Step 3: Transformation & Process
+df_processed = (spark.read.table(config['src'])
+                          .transform(utils_casting)
+                          .transform(ingest_at)
+                          .transform(trans_pop_density)
+                          .transform(data_validation)
+)
+
+# Step 4: Split & Write
+def delta_write(df, table_name, description, mode="overwrite"):
+    (df.write.format("delta")
+             .mode(mode)
+             .option("overwriteSchema", "true")
+             .option("description", description)
+             .saveAsTable(table_name)
+    )
+
+df_clean = (df_processed.filter(F.col("is_invalid") == False)
+                        .drop(F.col("is_invalid"))
+                        .drop(F.col("invalid_reason"))
+)
+
+df_quarantine = df_processed.filter(F.col("is_invalid") == True)
+
+delta_write(df_clean, config['tgt'], "Silver countries clean")
+delta_write(df_quarantine, config['qrt'], "Silver countries quarantine", mode="append")
+
+# Step 5: Optimize
+spark.sql(f"OPTIMIZE {config['tgt']}")
 
 *---------------------*
 *PYSPARK TRIM FUNCTION:*
